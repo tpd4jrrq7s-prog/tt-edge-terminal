@@ -103,8 +103,15 @@ def build_player_rolling_features(
     prior_matches: list[HistoricalMatchRecord],
     as_of: datetime,
     settings: HistoricalIntelligenceSettings | None = None,
+    latest_ranking: int | None = None,
 ) -> PlayerRollingFeatures:
-    """Build rolling features for `player_id` from matches already filtered to before `as_of`."""
+    """Build rolling features for `player_id` from matches already filtered to before `as_of`.
+
+    `latest_ranking`, if supplied, must already be the player's most
+    recent ranking strictly before `as_of` (e.g. from
+    `RankingRepository.latest_before`) — never a "current" ranking
+    backfilled into a historical snapshot.
+    """
     settings = settings or get_historical_intelligence_settings()
 
     perspectives = sort_most_recent_first([build_perspective(m, player_id) for m in prior_matches])
@@ -133,7 +140,7 @@ def build_player_rolling_features(
             perspectives, as_of, settings.form_recency_half_life_days
         ),
         opponent_adjusted_win_rate=None,
-        ranking=None,
+        ranking=latest_ranking,
         volatility_score=volatility_score(perspectives),
         historical_data_quality_average=(sum(quality_scores) / len(quality_scores)) if quality_scores else None,
         observation_count=len(perspectives),

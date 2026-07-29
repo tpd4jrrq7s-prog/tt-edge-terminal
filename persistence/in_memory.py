@@ -13,8 +13,14 @@ from collections.abc import Iterable
 from datetime import datetime
 
 from features.models import FeatureSnapshot
-from persistence.errors import DuplicateRecordError, ProviderMappingConflictError
-from persistence.models import HistoricalMatchRecord, HistoricalOddsRecord, HistoricalPlayerRecord
+from persistence.errors import DuplicateRecordError, ProviderMappingConflictError, RecordNotFoundError
+from persistence.models import (
+    HistoricalCompetitionRecord,
+    HistoricalMatchRecord,
+    HistoricalOddsRecord,
+    HistoricalPlayerRecord,
+    HistoricalRankingRecord,
+)
 
 
 class InMemoryPlayerRepository:
@@ -73,6 +79,12 @@ class InMemoryMatchRepository:
             )
         self._by_id[match.id] = match.model_copy(deep=True)
         self._provider_index[key] = match.id
+
+    def replace(self, match: HistoricalMatchRecord) -> None:
+        if match.id not in self._by_id:
+            raise RecordNotFoundError(f"Cannot replace match {match.id!r}: it does not exist")
+        self._by_id[match.id] = match.model_copy(deep=True)
+        self._provider_index[(match.provider, match.provider_match_id)] = match.id
 
     def add_many(self, matches: Iterable[HistoricalMatchRecord]) -> None:
         for match in matches:
@@ -190,3 +202,72 @@ class InMemoryFeatureSnapshotRepository:
 
     def clear(self) -> None:
         self._by_id.clear()
+
+
+class InMemoryRankingRepository:
+    """In-memory `RankingRepository` implementation. Preserves every observation."""
+
+    def __init__(self) -> None:
+        self._by_id: dict[str, HistoricalRankingRecord] = {}
+
+    def add(self, ranking: HistoricalRankingRecord) -> None:
+        if ranking.id in self._by_id:
+            raise DuplicateRecordError(f"Ranking observation {ranking.id!r} already exists")
+        self._by_id[ranking.id] = ranking.model_copy(deep=True)
+
+    def add_many(self, rankings: Iterable[HistoricalRankingRecord]) -> None:
+        for r in rankings:
+            self.add(r)
+
+    def get(self, ranking_id: str) -> HistoricalRankingRecord | None:
+        record = self._by_id.get(ranking_id)
+        return record.model_copy(deep=True) if record is not None else None
+
+    def list_for_player_before(self, player_id: str, cutoff: datetime) -> list[HistoricalRankingRecord]:
+        records = [r for r in self._by_id.values() if r.player_id == player_id and r.effective_at < cutoff]
+        ordered = sorted(records, key=lambda r: (r.effective_at, r.id))
+        return [r.model_copy(deep=True) for r in ordered]
+
+    def latest_before(self, player_id: str, cutoff: datetime) -> HistoricalRankingRecord | None:
+        candidates = self.list_for_player_before(player_id, cutoff)
+        return candidates[-1] if candidates else None
+
+    def count(self) -> int:
+        return len(self._by_id)
+
+    def clear(self) -> None:
+        self._by_id.clear()
+
+
+class InMemoryCompetitionRepository:
+    """In-memory `CompetitionRepository` implementation."""
+
+    def __init__(self) -> None:
+        self._by_id: dict[str, HistoricalCompetitionRecord] = {}
+        self._provider_index: dict[tuple[str, str], str] = {}
+
+    def add(self, competition: HistoricalCompetitionRecord) -> None:
+        if competition.id in self._by_id:
+            raise DuplicateRecordError(f"Competition {competition.id!r} already exists")
+        key = (competition.provider, competition.provider_competition_id)
+        existing = self._provider_index.get(key)
+        if existing is not None and existing != competition.id:
+            raise ProviderMappingConflictError(
+                f"Provider mapping {key} is already assigned to internal ID {existing!r}"
+            )
+        self._by_id[competition.id] = competition.model_copy(deep=True)
+        self._provider_index[key] = competition.id
+
+    def get(self, competition_id: str) -> HistoricalCompetitionRecord | None:
+        record = self._by_id.get(competition_id)
+        return record.model_copy(deep=True) if record is not None else None
+
+    def has_provider_id(self, provider: str, provider_competition_id: str) -> bool:
+        return (provider, provider_competition_id) in self._provider_index
+
+    def count(self) -> int:
+        return len(self._by_id)
+
+    def clear(self) -> None:
+        self._by_id.clear()
+        self._provider_index.clear()

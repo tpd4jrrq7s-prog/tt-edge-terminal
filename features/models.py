@@ -112,7 +112,9 @@ class MatchupFeatures(BaseModel):
     format_specific_h2h_win_rate_player_a: float | None = Field(default=None, ge=0.0, le=1.0)
 
     ranking_differential: float | None = Field(
-        default=None, description="Reserved: requires historical ranking data not modeled in Phase 3"
+        default=None,
+        description="player_b.ranking - player_a.ranking (positive favors player_a); "
+        "None when historical ranking data isn't available for either player",
     )
     rest_differential_hours: float | None = None
     workload_differential: float | None = None

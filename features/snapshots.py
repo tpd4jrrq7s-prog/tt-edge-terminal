@@ -97,19 +97,28 @@ def build_feature_snapshot(
     target_competition_id: str | None = None,
     target_best_of: int | None = None,
     settings: HistoricalIntelligenceSettings | None = None,
+    player_a_ranking: int | None = None,
+    player_b_ranking: int | None = None,
 ) -> FeatureSnapshot:
     """Assemble a leakage-safe FeatureSnapshot from pre-fetched, pre-filtered history.
 
     Every input list must already exclude the target match and contain
     only records strictly before `as_of` — this is asserted, not assumed.
+    `player_a_ranking`/`player_b_ranking`, if supplied, must already be
+    each player's most recent ranking strictly before `as_of` — never a
+    "current" ranking backfilled into a historical snapshot.
     """
     settings = settings or get_historical_intelligence_settings()
 
     all_source_matches = {m.id: m for m in [*player_a_history, *player_b_history, *head_to_head_history]}
     _assert_no_leakage(target_match_id, as_of, list(all_source_matches.values()))
 
-    player_a_features = build_player_rolling_features(player_a_id, player_a_history, as_of, settings)
-    player_b_features = build_player_rolling_features(player_b_id, player_b_history, as_of, settings)
+    player_a_features = build_player_rolling_features(
+        player_a_id, player_a_history, as_of, settings, latest_ranking=player_a_ranking
+    )
+    player_b_features = build_player_rolling_features(
+        player_b_id, player_b_history, as_of, settings, latest_ranking=player_b_ranking
+    )
     matchup_features = build_matchup_features(
         player_a_id,
         player_b_id,

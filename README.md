@@ -9,14 +9,17 @@ place bets, does not automate any betting action, and never will — no
 component in this codebase has write access to any bookmaker or betting
 system.
 
-## Status: Phase 3 — Historical Intelligence Platform
+## Status: Phase 4 — Real Historical Data Platform
 
 Phase 1 established the project skeleton. Phase 2A added
 provider-independent ingestion and normalization. Phase 2B added a
-transparent, deterministic, rules-based analytics engine. **Phase 3
-adds a leakage-safe historical data and feature-engineering foundation**
-for future machine-learning training, backtesting, and realtime
-inference:
+transparent, deterministic, rules-based analytics engine. Phase 3 added
+a leakage-safe historical data and feature-engineering foundation.
+**Phase 4 adds a production-oriented, provider-agnostic historical data
+acquisition and import layer**: sources, provider adapters, staged
+validation, identity resolution, deduplication/conflict handling,
+checkpointed resumption, quarantine, and quality metrics, feeding
+straight into the existing Phase 3 repositories and feature builders.
 
 - Typed configuration via Pydantic Settings
 - Structured (JSON) logging
@@ -30,27 +33,38 @@ inference:
   and human-readable explanations, orchestrated by
   `engine.orchestrator.MatchAnalyticsEngine`
 - Temporal historical persistence (`persistence/`): timezone-aware
-  match/player/odds records with strict-before-cutoff repository queries
+  match/player/odds/ranking/competition records with strict-before-cutoff
+  repository queries
 - Deterministic player identity resolution (`identity/`), never
   auto-merging ambiguous identities
 - Leakage-safe rolling player and matchup features (`features/`), built
-  only from records strictly before a prediction cutoff
+  only from records strictly before a prediction cutoff, now including
+  ranking differentials where historical ranking data exists
 - Chronological training datasets, time-based splits, explicit leakage
   detection, and deterministic export (`datasets/`)
-- A comprehensive `tests/` suite (307 tests) covering domain models,
-  ingestion, normalization, every engine module, and every Phase 3 package
+- A provider-agnostic historical import platform (`historical_ingestion/`,
+  `providers/`): deterministic mock/JSONL/CSV sources, a configurable
+  generic provider adapter, staged structural/semantic/temporal
+  validation, identity resolution integration, deduplication and
+  conflict quarantine, checkpointed resumption, and typed import reports
+- A comprehensive `tests/` suite (432 tests) covering domain models,
+  ingestion, normalization, every engine module, every Phase 3 package,
+  and every Phase 4 package
 
 **Important:** the probability/risk/value model in `engine/` is
-**deterministic and rules-based, not trained machine learning.** Phase 3
-does not train a model either — it builds the leakage-safe historical
-foundation (features, datasets, splits) that a future ML phase will
-train and validate against. Every number produced anywhere in this
-codebase traces back to an explicit, documented formula over data
-actually supplied — nothing is fabricated when data is missing.
+**deterministic and rules-based, not trained machine learning.** Neither
+Phase 3 nor Phase 4 trains a model — Phase 4 builds the real-data
+acquisition/import layer that feeds Phase 3's leakage-safe features and
+datasets, which a future ML phase will train and validate against.
+Every number produced anywhere in this codebase traces back to an
+explicit, documented formula over data actually supplied — nothing is
+fabricated when data is missing.
 
 Still no database, no web scraping, no live betting providers, no
 FastAPI/HTTP API, and no automated betting — this remains a read-only,
-analytics-focused platform.
+analytics-focused platform. **No production live provider is included
+yet** — only a deterministic mock provider and local JSONL/CSV file
+import.
 
 ## Project Structure
 
@@ -91,9 +105,10 @@ engine/
   demo.py               Read-only demonstration entrypoint (python -m engine.demo)
 config/
   historical.py         Typed, validated Phase 3 settings (windows, thresholds, splits, versions)
+  historical_ingestion.py  Typed, validated Phase 4 settings (batch size, policies, versions)
 persistence/
-  models.py             Timezone-aware HistoricalPlayerRecord/HistoricalMatchRecord/HistoricalOddsRecord
-  protocols.py          PlayerRepository/MatchRepository/OddsRepository/FeatureSnapshotRepository
+  models.py             Timezone-aware Historical{Player,Match,Odds,Ranking,Competition}Record
+  protocols.py          Player/Match/Odds/FeatureSnapshot/Ranking/CompetitionRepository protocols
   in_memory.py          Deterministic in-memory repository implementations (no database)
   errors.py             DuplicateRecordError, ProviderMappingConflictError, RecordNotFoundError
 identity/
@@ -118,6 +133,29 @@ datasets/
   leakage.py            LeakageCheckResult/LeakageReport + explicit leakage checks
   export.py             Deterministic JSONL/CSV export + manifest export (no pickle)
   errors.py             DatasetError, LeakageViolation, InsufficientDataForSplitError
+historical_ingestion/
+  models.py             RawRecord, SourceBatch, SourceHealth, ImportProvenance, Imported* canonical models
+  protocols.py          HistoricalDataSource, HistoricalProviderAdapter, CheckpointStore
+  validation.py         Staged structural/semantic/temporal ValidationIssue checks + policy
+  deduplication.py      Deterministic duplicate/conflict classification (match + odds)
+  checkpoints.py        ImportCheckpoint + InMemoryCheckpointStore (no database)
+  reports.py            ImportReport/BatchImportReport/ImportMetrics/QuarantineRecord/ConflictRecord
+  pipeline.py            Pure per-record adapt/resolve/convert functions
+  service.py            HistoricalImportService: the orchestrated entrypoint (staging + transactions)
+  errors.py             HistoricalIngestionError, SourceReadError, CheckpointVersionError, ...
+  demo.py               Read-only demonstration entrypoint (python -m historical_ingestion.demo)
+  sources/
+    base.py             Shared FileHistoricalDataSource (cursor-as-line-offset resumption)
+    jsonl_source.py      JSONLFileSource: UTF-8 JSON Lines, one record per line
+    csv_source.py        CSVFileSource: UTF-8 CSV, configurable delimiter
+    mock_provider.py     MockTableTennisProviderSource: deterministic illustrative provider data
+providers/
+  models.py             ProviderMappingConfig: declarative, per-provider field mappings
+  registry.py           ProviderRegistry: explicit, non-global provider-name -> adapter lookup
+  errors.py             ProviderError, UnknownProviderStatusError, ProviderMappingError
+  generic/
+    adapter.py           GenericProviderAdapter: config-driven HistoricalProviderAdapter
+    mappings.py          mock_provider_mapping(): the reference ProviderMappingConfig
 tests/
   domain/               Tests for Player, Match, Odds
   app/                  Startup smoke test
@@ -128,6 +166,8 @@ tests/
   identity/             Normalization, exact/fuzzy/alias matching, ambiguity, determinism
   features/             Rolling features, matchup features, snapshots, builder, engine adapter
   datasets/             Dataset building, splits, leakage detection, export
+  historical_ingestion/ Sources, validation, deduplication, checkpoints, reports, service, integration
+  providers/            Adapter field mapping, status mapping, registry
 ```
 
 ## Analytics Data Flow
@@ -264,14 +304,18 @@ calls and never suggests or places a wager.
   point-by-point detail.
 - Output is analytical decision support, not certainty, and this project
   **does not place bets or automate wagering in any form.**
-- **Historical demo data in `features/demo.py` is illustrative/mock** —
-  hand-authored fixed records, not real match results.
-- **No trained ML model exists yet.** Phase 3 builds the leakage-safe
-  feature/dataset foundation only; `datasets/` produces labeled examples
-  and chronological splits, not predictions.
-- `opponent_adjusted_win_rate` and `ranking_differential` are always
-  `None` in Phase 3 — they require historical ranking-over-time data
-  that isn't modeled yet; reserved fields, not fabricated values.
+- **Historical demo data in `features/demo.py` and
+  `historical_ingestion/demo.py` is illustrative/mock** — hand-authored
+  or deterministically generated fixed records, not real match results.
+- **No trained ML model exists yet.** Phases 3 and 4 build the
+  leakage-safe feature/dataset foundation and the data acquisition/import
+  layer respectively; `datasets/` produces labeled examples and
+  chronological splits, not predictions.
+- `opponent_adjusted_win_rate` is always `None` — it would require a
+  recursive notion of "opponent strength" this phase deliberately does
+  not model. `ranking_differential` **is now populated** when historical
+  ranking data exists (via `persistence.HistoricalRankingRecord` /
+  `RankingRepository`, wired through `HistoricalFeatureBuilder`).
 - Identity resolution only folds accents within already-Latin text
   (Unicode NFKD + combining-mark removal); it does **not** perform
   cross-script transliteration (e.g. Cyrillic/CJK to Latin), which would
@@ -279,20 +323,38 @@ calls and never suggests or places a wager.
 - `DatasetBuilder` does not enumerate the repository itself — callers
   supply the exact match IDs to include, since `MatchRepository` has no
   "list all" capability by design.
+- **No production live provider is included yet.** `historical_ingestion`
+  ships only a deterministic mock provider and local JSONL/CSV file
+  sources — no HTTP client, no scraping, no real bookmaker/data-vendor
+  integration.
+- A "safe merge" (`merged_safe`, a still-`scheduled` record later
+  completed by the same provider record) is the only update path;
+  `MatchRepository.replace()` is a narrow, explicit primitive, not a
+  general upsert — genuinely conflicting re-imports are always
+  quarantined/rejected, never silently overwritten.
+- `historical_ingestion` quarantine/conflict stores are per-service-instance,
+  in-memory, and not persisted — restarting a process loses them (only
+  the `CheckpointStore` cursor and the underlying repositories persist
+  within the process's lifetime).
 
 ## Next Phase Roadmap
 
 - A real, read-only table tennis data provider integrated behind the
-  existing `MatchSource` protocol (a sanctioned API/feed, not scraping).
+  existing `HistoricalDataSource`/`HistoricalProviderAdapter` protocols
+  (a sanctioned API/feed, not scraping), registered via `ProviderRegistry`.
 - Training an actual statistical/ML model against the Phase 3
   `datasets/` output (chronological splits, leakage-checked), with the
   Phase 2B rules-based engine retained as an explainable baseline/fallback.
-- Historical ranking-over-time data, enabling `opponent_adjusted_win_rate`
-  and `ranking_differential`.
+- Historical ranking-over-time data from a real provider, populating
+  `RankingRepository` at scale (the model/repository/feature wiring
+  already exists as of Phase 4).
 - Surface- and competition-aware historical splits once real historical
-  data is available.
+  data is available (`HistoricalCompetitionRecord`/`CompetitionRepository`
+  already exist as of Phase 4).
 - A persistent (non-in-memory) repository backing `persistence.protocols`
   once real data volumes require it.
+- A manual-review workflow (still no UI) for `pending` quarantine records,
+  and durable (non-in-memory) checkpoint/quarantine storage.
 
 ## Ingestion Data Flow
 
@@ -458,7 +520,7 @@ Repeated export of identical examples is byte-for-byte deterministic
 (the one documented exception is `DatasetManifest.created_at`, which
 reflects real build time unless explicitly injected).
 
-## Running the Historical Intelligence Demo
+## Running the Feature/Dataset Demo (Phase 3)
 
 ```bash
 pip install -r requirements.txt
@@ -473,6 +535,179 @@ observation counts, data-quality warnings, and the provenance
 fingerprint, and (3) builds a small chronological training dataset from
 those same matches, printing split sizes and a full leakage-check
 report. It makes no network calls and never suggests or places a wager.
+
+## Phase 4 Architecture
+
+```
+Provider export / HTTP response / local file
+    ↓
+Provider-specific raw adapter          (providers.generic.adapter.GenericProviderAdapter)
+    ↓
+Canonical historical import records    (historical_ingestion.models.Imported*)
+    ↓
+Validation                             (historical_ingestion.validation — structural/semantic/temporal)
+    ↓
+Identity resolution                    (identity.resolver.IdentityResolver, integrated in the pipeline)
+    ↓
+Deduplication and conflict detection   (historical_ingestion.deduplication)
+    ↓
+Historical repositories                (persistence.in_memory — Player/Match/Odds/Ranking/Competition)
+    ↓
+Import report and provenance           (historical_ingestion.reports.ImportReport)
+    ↓
+Existing snapshot and dataset builders (features.builder, datasets.builder)
+```
+
+`historical_ingestion.service.HistoricalImportService` is the single
+orchestrated entrypoint, wiring a `HistoricalDataSource`, a
+`HistoricalProviderAdapter`, an `IdentityResolver`, the five Phase 3/4
+repositories, and a `CheckpointStore` — all injected, none hardcoded.
+
+## Source and Adapter Separation
+
+A `HistoricalDataSource` (`historical_ingestion.protocols`) only knows
+how to fetch/read a batch of opaque `RawRecord`s and report a next
+cursor — it never interprets provider-specific field names. Three
+sources exist: `MockTableTennisProviderSource` (deterministic, in-memory,
+illustrative), `JSONLFileSource`, and `CSVFileSource` (both local-file
+only, sharing cursor-as-line-offset resumption via
+`sources.base.FileHistoricalDataSource`). None makes a network call.
+
+A `HistoricalProviderAdapter` (`providers`) maps a `RawRecord`'s opaque
+payload into canonical `Imported*` models. `providers.generic.adapter.GenericProviderAdapter`
+is entirely driven by a `ProviderMappingConfig` (`providers.models`) —
+every provider-specific field name lives in that config object
+(see `providers.generic.mappings.mock_provider_mapping` for the
+reference example), never hardcoded in `historical_ingestion`'s core
+service/pipeline. Unknown provider statuses are never silently mapped:
+depending on `unknown_status_policy`, they raise
+`UnknownProviderStatusError` or are left unmapped (`status=None`) with
+an explicit warning attached to the record's provenance.
+
+## Canonical Import Models
+
+`historical_ingestion.models` defines `ImportedPlayer`, `ImportedMatch`
+(+ `ImportedSet`), `ImportedOdds`, `ImportedCompetition`, and
+`ImportedRanking` — deliberately more permissive than the
+`persistence.models` records they may become (mirroring Phase 2A's
+"permissive raw layer, strict validation stage" split). Every one
+carries an `ImportProvenance`: provider, provider record ID, source
+batch ID, source timestamp (kept separate from ingestion timestamp), a
+deterministic raw-payload fingerprint, mapping version, and warnings.
+Timestamps are timezone-aware or absent — never fabricated.
+
+## Staged Validation
+
+`historical_ingestion.validation` runs three stages producing typed
+`ValidationIssue`s (severity `info`/`warning`/`error`/`fatal`, a code,
+message, record ID, field path, stage, and provider):
+
+- **Structural** — required fields, timestamp parseability, numeric
+  ranges, negative set scores.
+- **Semantic** — player A ≠ player B, winner belongs to the match,
+  completed-requires-winner / scheduled-forbids-winner, unique set
+  numbers, recorded winner vs. set-score consistency, sets not
+  exceeding `best_of`, decimal odds > 1.
+- **Temporal** — completion not preceding start, provider timestamp not
+  after ingestion (beyond `timestamp_tolerance_seconds`), odds aligned
+  to the match's lifecycle, no future historical record unless
+  `allow_future_records` is set.
+
+`decide_validation_outcome` applies `validation_policy`
+(`strict`/`lenient`) and `warning_policy` (`accept`/`reject`) to turn a
+record's issues into `accept` / `accept_with_warnings` / `reject`.
+
+## Identity Resolution (Integrated)
+
+Every imported player is normalized and resolved through the existing
+Phase 3 `IdentityResolver`: exact external ID first, then alias, then
+deterministic name similarity, with country hints reducing confidence
+on mismatch. **Ambiguous or rejected resolutions are never auto-merged
+or silently persisted** — they are quarantined (or rejected, per
+`identity_ambiguity_policy`) with the candidate scores and reasons
+preserved on the `QuarantineRecord`.
+
+## Deduplication and Conflicts
+
+`historical_ingestion.deduplication` computes deterministic internal IDs
+— `f"{provider}:{provider_match_id}"` for matches, and a composite key
+for odds — so re-importing the same provider record always maps to the
+same internal ID. Outcomes: `inserted`, `skipped_idempotent` (identical
+re-import), `merged_safe` (a still-`scheduled` record safely completed
+by a later import of the *same* provider record — the only supported
+update path, via `MatchRepository.replace()`), `quarantined` (a likely
+cross-provider duplicate, by normalized players + a configurable
+scheduled-time window), and `rejected_conflict` (same provider ID but a
+different winner/score/schedule — **never auto-merged**; recorded as a
+`ConflictRecord` with both versions' provenance).
+
+## Checkpointing, Transactions, and Dry-Run
+
+`ImportCheckpoint` (source, provider, cursor, last successful batch,
+processed count, repository fingerprint, version, timestamp) is only
+saved **after** a batch's staged records are successfully persisted —
+see `historical_ingestion.service` for the exact in-memory staging
+semantics (not real ACID transactions, clearly documented): a batch's
+inserts/replacements/quarantine/conflict records accumulate in local
+lists first, and only that batch's checkpoint advances if nothing
+raised an unexpected exception while staging it. A fatal error aborts
+the whole batch with zero partial writes and an unchanged checkpoint.
+`InMemoryCheckpointStore` rejects a version mismatch
+(`CheckpointVersionError`) rather than silently trusting stale data.
+
+**Dry-run mode** (`service.run(dry_run=True)`) runs every step —
+adapt, validate, resolve, deduplicate, report — but persists nothing
+and never advances the checkpoint, including the identity
+resolver's own within-run state.
+
+## Ranking History and Competition Metadata
+
+`persistence.models.HistoricalRankingRecord` is an append-only series
+(multiple observations per player preserved, never overwritten);
+`RankingRepository.latest_before(player_id, cutoff)` is strict-before,
+so a snapshot never leaks a future or "current" ranking. Wired into
+`HistoricalFeatureBuilder` via an optional `ranking_repository`
+constructor argument — omitting it preserves exact Phase 3 behavior
+(`ranking` stays `None`). `HistoricalCompetitionRecord` carries name,
+country, level, format, season, indoor/outdoor, and an active date
+range — every field optional, nothing invented for what a provider
+didn't supply.
+
+## Quality Metrics
+
+Every batch and the cumulative run report an `ImportMetrics` block
+(structural/semantic validity rate, identity resolution/ambiguity rate,
+exact-duplicate rate, conflict rate, accepted-record rate, and
+coverage figures) **always paired with `sample_size`** — a metric is
+never presented without the count backing it, so a small sample can't
+be mistaken for a well-supported one.
+
+## Local File Import
+
+`JSONLFileSource`/`CSVFileSource` read UTF-8 only, with explicit
+per-source-instance record typing and (for CSV) a configurable
+delimiter; row numbers are stable and malformed rows raise a clear
+`SourceReadError` naming the file and row/line. Both share deterministic
+batch checksums (`sources.base.compute_batch_checksum`) and
+cursor-as-line-offset resumption. No pandas, no pickle, no arbitrary
+code execution — standard library `json`/`csv` only. Report export
+(`historical_ingestion.reports.export_report_json`) is atomic
+(temp file + `os.replace`).
+
+## Running the Historical Ingestion Demo (Phase 4)
+
+```bash
+pip install -r requirements.txt
+python -m historical_ingestion.demo
+```
+
+Processes two illustrative/mock batches end to end: valid matches, an
+exact-duplicate re-import (skipped), an ambiguous player identity
+(quarantined), a conflicting match result (rejected as a conflict),
+multi-observation odds history, and ranking history — then prints the
+import report, quarantine/conflict records, repository counts, a
+built `FeatureSnapshot`, and a small chronological dataset. Makes no
+network calls and never suggests or places a wager.
 
 ## Requirements
 
@@ -503,11 +738,12 @@ Expected output (structured JSON logs to stdout) confirms:
 
 ```bash
 pip install -r requirements.txt
-python -m compileall app config domain ingestion normalization engine persistence identity features datasets
+python -m compileall app config domain ingestion normalization engine persistence identity features datasets historical_ingestion providers
 pytest -v
 python -m app.main
 python -m engine.demo
 python -m features.demo
+python -m historical_ingestion.demo
 ```
 
 ## Configuration
@@ -532,3 +768,11 @@ precision) are configured via `HISTORICAL_*` environment variables —
 see `config/historical.py`. All weights, thresholds, ratios, and version
 identifiers are validated at construction; invalid configuration fails
 immediately with a clear `pydantic.ValidationError`.
+
+Historical ingestion settings (batch size, validation/warning policy,
+timestamp tolerance, duplicate timestamp window, identity ambiguity
+policy, dry-run default, quarantine enabled, checkpoint/mapping
+version, max records per run, strict mode) are configured via
+`INGEST_*` environment variables — see `config/historical_ingestion.py`.
+Same validation guarantee: invalid configuration fails immediately and
+clearly.

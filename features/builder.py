@@ -17,21 +17,29 @@ from config.historical import HistoricalIntelligenceSettings, get_historical_int
 from features.errors import TargetMatchNotFoundError
 from features.models import FeatureSnapshot
 from features.snapshots import build_feature_snapshot
-from persistence.protocols import MatchRepository
+from persistence.protocols import MatchRepository, RankingRepository
 
 
 class HistoricalFeatureBuilder:
-    """Builds leakage-safe FeatureSnapshots from a `MatchRepository`."""
+    """Builds leakage-safe FeatureSnapshots from a `MatchRepository`.
+
+    `ranking_repository` is optional — when supplied, each player's most
+    recent ranking strictly before `as_of` is looked up and threaded into
+    the snapshot; without it, ranking fields stay `None` exactly as in
+    Phase 3.
+    """
 
     def __init__(
         self,
         match_repository: MatchRepository,
         settings: HistoricalIntelligenceSettings | None = None,
         id_factory: Callable[[str, datetime], str] | None = None,
+        ranking_repository: RankingRepository | None = None,
     ) -> None:
         self._matches = match_repository
         self._settings = settings or get_historical_intelligence_settings()
         self._id_factory = id_factory or (lambda match_id, as_of: f"{match_id}@{as_of.isoformat()}")
+        self._rankings = ranking_repository
 
     def build(
         self,
@@ -51,6 +59,14 @@ class HistoricalFeatureBuilder:
             target.player_a_id, target.player_b_id, as_of
         )
 
+        player_a_ranking = None
+        player_b_ranking = None
+        if self._rankings is not None:
+            a_ranking = self._rankings.latest_before(target.player_a_id, as_of)
+            b_ranking = self._rankings.latest_before(target.player_b_id, as_of)
+            player_a_ranking = a_ranking.ranking if a_ranking is not None else None
+            player_b_ranking = b_ranking.ranking if b_ranking is not None else None
+
         return build_feature_snapshot(
             snapshot_id=self._id_factory(target_match_id, as_of),
             target_match_id=target_match_id,
@@ -63,4 +79,6 @@ class HistoricalFeatureBuilder:
             target_competition_id=target_competition_id if target_competition_id is not None else target.competition_id,
             target_best_of=target_best_of if target_best_of is not None else target.best_of,
             settings=self._settings,
+            player_a_ranking=player_a_ranking,
+            player_b_ranking=player_b_ranking,
         )

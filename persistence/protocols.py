@@ -15,7 +15,13 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from features.models import FeatureSnapshot
-from persistence.models import HistoricalMatchRecord, HistoricalOddsRecord, HistoricalPlayerRecord
+from persistence.models import (
+    HistoricalCompetitionRecord,
+    HistoricalMatchRecord,
+    HistoricalOddsRecord,
+    HistoricalPlayerRecord,
+    HistoricalRankingRecord,
+)
 
 
 @runtime_checkable
@@ -40,6 +46,16 @@ class MatchRepository(Protocol):
     def add_many(self, matches: Iterable[HistoricalMatchRecord]) -> None: ...
 
     def get(self, match_id: str) -> HistoricalMatchRecord | None: ...
+
+    def replace(self, match: HistoricalMatchRecord) -> None:
+        """Overwrite an existing record with the same `id` (e.g. scheduled -> completed progression).
+
+        Raises `persistence.errors.RecordNotFoundError` if no record
+        with that `id` exists yet — this is an update primitive, not an
+        upsert. Used only for safe, non-conflicting merges; see
+        `historical_ingestion.deduplication`.
+        """
+        ...
 
     def has_provider_id(self, provider: str, provider_match_id: str) -> bool: ...
 
@@ -86,6 +102,40 @@ class FeatureSnapshotRepository(Protocol):
     ) -> FeatureSnapshot | None:
         """Return the most recent snapshot for this pair with as_of strictly before cutoff."""
         ...
+
+    def count(self) -> int: ...
+
+    def clear(self) -> None: ...
+
+
+@runtime_checkable
+class RankingRepository(Protocol):
+    def add(self, ranking: HistoricalRankingRecord) -> None: ...
+
+    def add_many(self, rankings: Iterable[HistoricalRankingRecord]) -> None: ...
+
+    def get(self, ranking_id: str) -> HistoricalRankingRecord | None: ...
+
+    def latest_before(self, player_id: str, cutoff: datetime) -> HistoricalRankingRecord | None:
+        """Return the most recent ranking observation for player_id strictly before cutoff."""
+        ...
+
+    def list_for_player_before(self, player_id: str, cutoff: datetime) -> list[HistoricalRankingRecord]:
+        """Return this player's ranking observations with effective_at strictly before cutoff."""
+        ...
+
+    def count(self) -> int: ...
+
+    def clear(self) -> None: ...
+
+
+@runtime_checkable
+class CompetitionRepository(Protocol):
+    def add(self, competition: HistoricalCompetitionRecord) -> None: ...
+
+    def get(self, competition_id: str) -> HistoricalCompetitionRecord | None: ...
+
+    def has_provider_id(self, provider: str, provider_competition_id: str) -> bool: ...
 
     def count(self) -> int: ...
 

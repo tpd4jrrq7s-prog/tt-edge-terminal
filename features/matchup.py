@@ -56,6 +56,11 @@ def build_matchup_features(
     if player_a_features.volatility_score is not None and player_b_features.volatility_score is not None:
         volatility_differential = player_a_features.volatility_score - player_b_features.volatility_score
 
+    ranking_differential = None
+    if player_a_features.ranking is not None and player_b_features.ranking is not None:
+        # Positive favors player_a (a lower ranking number is better).
+        ranking_differential = float(player_b_features.ranking - player_a_features.ranking)
+
     if not perspectives:
         return MatchupFeatures(
             player_a_id=player_a_id,
@@ -65,6 +70,7 @@ def build_matchup_features(
             workload_differential=workload_differential,
             form_differential=form_differential,
             volatility_differential=volatility_differential,
+            ranking_differential=ranking_differential,
         )
 
     completed = [p for p in perspectives if p.won is not None]
@@ -124,4 +130,5 @@ def build_matchup_features(
         workload_differential=workload_differential,
         form_differential=form_differential,
         volatility_differential=volatility_differential,
+        ranking_differential=ranking_differential,
     )

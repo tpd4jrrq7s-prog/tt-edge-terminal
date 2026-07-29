@@ -186,3 +186,54 @@ class HistoricalOddsRecord(BaseModel):
     def _validate_captured_at(self) -> "HistoricalOddsRecord":
         _require_aware(self.captured_at, field_name="captured_at")
         return self
+
+
+class HistoricalRankingRecord(BaseModel):
+    """A single historical ranking observation for one player at one point in time.
+
+    Multiple observations for the same player are expected and preserved
+    — this is not a "current ranking" slot, it is an append-only series.
+    """
+
+    id: str = Field(..., min_length=1, description="Stable internal ranking observation ID")
+    player_id: str = Field(..., min_length=1)
+    ranking: int = Field(..., ge=1)
+    ranking_points: float | None = None
+    effective_at: datetime
+    provider: str = Field(..., min_length=1)
+    provider_record_id: str = Field(..., min_length=1)
+    ingested_at: datetime
+
+    @model_validator(mode="after")
+    def _validate_timestamps(self) -> "HistoricalRankingRecord":
+        _require_aware(self.effective_at, field_name="effective_at")
+        _require_aware(self.ingested_at, field_name="ingested_at")
+        return self
+
+
+class HistoricalCompetitionRecord(BaseModel):
+    """Canonical metadata about a competition/tournament. Unknown fields stay optional — never invented."""
+
+    id: str = Field(..., min_length=1, description="Stable internal competition ID")
+    provider: str = Field(..., min_length=1)
+    provider_competition_id: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1)
+    country: str | None = None
+    level: str | None = None
+    format: str | None = None
+    season: str | None = None
+    indoor: bool | None = None
+    active_from: datetime | None = None
+    active_to: datetime | None = None
+    ingested_at: datetime
+
+    @model_validator(mode="after")
+    def _validate_timestamps(self) -> "HistoricalCompetitionRecord":
+        if self.active_from is not None:
+            _require_aware(self.active_from, field_name="active_from")
+        if self.active_to is not None:
+            _require_aware(self.active_to, field_name="active_to")
+        _require_aware(self.ingested_at, field_name="ingested_at")
+        if self.active_from is not None and self.active_to is not None and self.active_to < self.active_from:
+            raise ValueError("active_to cannot precede active_from")
+        return self
