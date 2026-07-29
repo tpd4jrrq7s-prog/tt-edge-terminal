@@ -15,3 +15,13 @@ dist/
 .DS_Store
 .vscode/
 .idea/
+
+# Archives and temporary imports
+*.zip
+__MACOSX/
+backup-old/
+tt-edge-terminal-phase1/
+
+# Local scratch files
+*.log
+.DS_Store
