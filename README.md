@@ -9,12 +9,14 @@ place bets, does not automate any betting action, and never will — no
 component in this codebase has write access to any bookmaker or betting
 system.
 
-## Status: Phase 2B — Deterministic Analytics Engine
+## Status: Phase 3 — Historical Intelligence Platform
 
 Phase 1 established the project skeleton. Phase 2A added
-provider-independent ingestion and normalization. Phase 2B adds a
-transparent, deterministic, rules-based analytics and feature-engineering
-layer on top:
+provider-independent ingestion and normalization. Phase 2B added a
+transparent, deterministic, rules-based analytics engine. **Phase 3
+adds a leakage-safe historical data and feature-engineering foundation**
+for future machine-learning training, backtesting, and realtime
+inference:
 
 - Typed configuration via Pydantic Settings
 - Structured (JSON) logging
@@ -27,15 +29,24 @@ layer on top:
   probability, confidence, risk, value, pattern detection, data quality,
   and human-readable explanations, orchestrated by
   `engine.orchestrator.MatchAnalyticsEngine`
-- A comprehensive `tests/` suite (169 tests) covering domain models,
-  ingestion, normalization, and every engine module
+- Temporal historical persistence (`persistence/`): timezone-aware
+  match/player/odds records with strict-before-cutoff repository queries
+- Deterministic player identity resolution (`identity/`), never
+  auto-merging ambiguous identities
+- Leakage-safe rolling player and matchup features (`features/`), built
+  only from records strictly before a prediction cutoff
+- Chronological training datasets, time-based splits, explicit leakage
+  detection, and deterministic export (`datasets/`)
+- A comprehensive `tests/` suite (307 tests) covering domain models,
+  ingestion, normalization, every engine module, and every Phase 3 package
 
 **Important:** the probability/risk/value model in `engine/` is
-**deterministic and rules-based, not trained machine learning.** Every
-number it produces traces back to an explicit, documented formula over
-the data actually supplied — nothing is fabricated when data is missing.
-It is the feature-engineering and transparency layer intended to
-eventually feed a statistical/ML model, not that model itself.
+**deterministic and rules-based, not trained machine learning.** Phase 3
+does not train a model either — it builds the leakage-safe historical
+foundation (features, datasets, splits) that a future ML phase will
+train and validate against. Every number produced anywhere in this
+codebase traces back to an explicit, documented formula over data
+actually supplied — nothing is fabricated when data is missing.
 
 Still no database, no web scraping, no live betting providers, no
 FastAPI/HTTP API, and no automated betting — this remains a read-only,
@@ -78,12 +89,45 @@ engine/
   explanations.py       Deterministic, non-LLM human-readable explanations
   orchestrator.py       MatchAnalyticsEngine: the single orchestrated entrypoint
   demo.py               Read-only demonstration entrypoint (python -m engine.demo)
+config/
+  historical.py         Typed, validated Phase 3 settings (windows, thresholds, splits, versions)
+persistence/
+  models.py             Timezone-aware HistoricalPlayerRecord/HistoricalMatchRecord/HistoricalOddsRecord
+  protocols.py          PlayerRepository/MatchRepository/OddsRepository/FeatureSnapshotRepository
+  in_memory.py          Deterministic in-memory repository implementations (no database)
+  errors.py             DuplicateRecordError, ProviderMappingConflictError, RecordNotFoundError
+identity/
+  models.py             NormalizedPlayerIdentity, PlayerIdentityRecord, IdentityCandidate/Resolution
+  normalizer.py         Deterministic name normalization (Unicode fold, case, punctuation)
+  resolver.py           IdentityResolver: transparent, dependency-free similarity scoring
+  errors.py             InvalidPlayerNameError
+features/
+  models.py             PlayerRollingFeatures, MatchupFeatures, FeatureSnapshot, ProvenanceMetadata
+  rolling.py            Shared per-player-perspective rolling-window primitives
+  player.py             Builds PlayerRollingFeatures (form, sets, points, streaks, rest, volatility, ...)
+  matchup.py            Builds MatchupFeatures (head-to-head, no-data-safe)
+  snapshots.py          Assembles a leakage-safe FeatureSnapshot + provenance fingerprint
+  builder.py            HistoricalFeatureBuilder: the orchestrated, repository-backed entrypoint
+  engine_adapter.py      Converts a FeatureSnapshot into Phase 2B engine inputs, where clean
+  errors.py             TargetMatchNotFoundError, SnapshotLeakageError
+  demo.py               Read-only demonstration entrypoint (python -m features.demo)
+datasets/
+  models.py             TrainingExample, DatasetManifest, DatasetSplit/SplitFold/SplitPlan
+  builder.py            DatasetBuilder: completed matches -> labeled TrainingExamples
+  splits.py             Chronological holdout, walk-forward, and rolling-window splits
+  leakage.py            LeakageCheckResult/LeakageReport + explicit leakage checks
+  export.py             Deterministic JSONL/CSV export + manifest export (no pickle)
+  errors.py             DatasetError, LeakageViolation, InsufficientDataForSplitError
 tests/
   domain/               Tests for Player, Match, Odds
   app/                  Startup smoke test
   ingestion/            Tests for raw models, mock source, service, scheduler
   normalization/        Tests for match/odds normalization, including invalid input
   engine/               Tests for every engine module, config validation, and the orchestrator
+  persistence/          Repository cutoff semantics, duplicates, defensive copies, config validation
+  identity/             Normalization, exact/fuzzy/alias matching, ambiguity, determinism
+  features/             Rolling features, matchup features, snapshots, builder, engine adapter
+  datasets/             Dataset building, splits, leakage detection, export
 ```
 
 ## Analytics Data Flow
@@ -220,17 +264,35 @@ calls and never suggests or places a wager.
   point-by-point detail.
 - Output is analytical decision support, not certainty, and this project
   **does not place bets or automate wagering in any form.**
+- **Historical demo data in `features/demo.py` is illustrative/mock** —
+  hand-authored fixed records, not real match results.
+- **No trained ML model exists yet.** Phase 3 builds the leakage-safe
+  feature/dataset foundation only; `datasets/` produces labeled examples
+  and chronological splits, not predictions.
+- `opponent_adjusted_win_rate` and `ranking_differential` are always
+  `None` in Phase 3 — they require historical ranking-over-time data
+  that isn't modeled yet; reserved fields, not fabricated values.
+- Identity resolution only folds accents within already-Latin text
+  (Unicode NFKD + combining-mark removal); it does **not** perform
+  cross-script transliteration (e.g. Cyrillic/CJK to Latin), which would
+  require a curated mapping to be safe.
+- `DatasetBuilder` does not enumerate the repository itself — callers
+  supply the exact match IDs to include, since `MatchRepository` has no
+  "list all" capability by design.
 
 ## Next Phase Roadmap
 
 - A real, read-only table tennis data provider integrated behind the
   existing `MatchSource` protocol (a sanctioned API/feed, not scraping).
-- Calibrating the probability model against real outcomes and
-  introducing an actual statistical/ML model behind the same
-  `engine.models` contracts, with the rules-based engine retained as an
-  explainable baseline/fallback.
+- Training an actual statistical/ML model against the Phase 3
+  `datasets/` output (chronological splits, leakage-checked), with the
+  Phase 2B rules-based engine retained as an explainable baseline/fallback.
+- Historical ranking-over-time data, enabling `opponent_adjusted_win_rate`
+  and `ranking_differential`.
 - Surface- and competition-aware historical splits once real historical
   data is available.
+- A persistent (non-in-memory) repository backing `persistence.protocols`
+  once real data volumes require it.
 
 ## Ingestion Data Flow
 
@@ -262,6 +324,156 @@ betting provider. Any class implementing the `MatchSource` protocol
 (`ingestion/protocols.py`) can be substituted via dependency injection
 into `IngestionService` once a real provider is integrated.
 
+## Phase 3 Architecture
+
+```
+Historical observations (HistoricalPlayerRecord / HistoricalMatchRecord / HistoricalOddsRecord)
+    ↓
+Identity resolution (identity.resolver.IdentityResolver)
+    ↓
+Validation and deduplication (persistence.models validators, persistence.in_memory)
+    ↓
+Temporal repositories (persistence.protocols + persistence.in_memory)
+    ↓
+Leakage-safe snapshots (features.snapshots.build_feature_snapshot)
+    ↓
+Rolling player and matchup features (features.player / features.matchup)
+    ↓
+Training/backtesting datasets (datasets.builder / datasets.splits)
+    ↓
+Existing Phase 2B analytics engine (via features.engine_adapter, where clean)
+```
+
+## Temporal Data Model & Strict Cutoff Semantics
+
+Every timestamp on a `persistence.models` record is **timezone-aware**
+— naive datetimes are rejected at construction. Source (provider)
+timestamps are always kept separate from ingestion timestamps.
+`HistoricalMatchRecord.effective_timestamp` is the single authoritative
+"this match happened at" value used for all cutoff comparisons: it
+prefers `completed_at`, then `actual_start_at`, then `scheduled_at`.
+
+**Cutoff semantics are strict-before by default**: a query for records
+"before T" never returns a record whose `effective_timestamp` is `>= T`.
+`OddsRepository.list_for_match_at_or_before` is the one documented
+exception (inclusive — "latest known price" semantics). This asymmetry
+is intentional and tested.
+
+## Identity Resolution
+
+`identity.resolver.IdentityResolver` deterministically resolves a raw
+player observation against known `PlayerIdentityRecord`s:
+
+1. An **exact external identifier match** (same provider + provider
+   player ID) always outranks fuzzy name comparison.
+2. Otherwise, name similarity is scored with the stdlib
+   `difflib.SequenceMatcher` (transparent, dependency-free) against the
+   canonical name and every known alias.
+3. Country/birth-date agreement adjusts the score; mismatches apply a
+   configurable penalty rather than being ignored.
+4. Short names (`short_name_length_threshold`) require a higher score
+   margin (`short_name_extra_margin`) before being auto-matched.
+
+Outcomes are `matched`, `created`, `ambiguous`, or `rejected` —
+**ambiguous candidates are never auto-merged**; the caller decides.
+`REJECTED` is reserved for a genuine data conflict: an exact external ID
+match whose name similarity falls below a sanity floor.
+
+## Rolling Feature Definitions
+
+`features.player.build_player_rolling_features` computes, per
+configured window (`last_5`, `last_10`, `last_20`, and `all_time`):
+matches played/won/lost, win/set/point rates, average set/point margin,
+straight-sets win rate, deciding-set appearance/win rate, first-set win
+rate, comeback-after-losing-first-set rate, loss-rate-after-winning-first-set,
+average match duration, and incomplete-match count — plus non-windowed
+signals: rest time since the previous match, matches in the last 24h/7d,
+result streak, recency-weighted win rate, and a volatility score.
+
+**Missing-value policy:** every rate is `float | None` — `None` means
+"not enough data", never a fabricated `0.0`. Every rate with a natural
+denominator is paired with an explicit `_n` observation-count field.
+`opponent_adjusted_win_rate` and `ranking_differential` are always
+`None` in Phase 3 (see "Current Limitations").
+
+`features.matchup.build_matchup_features` computes head-to-head win
+rates, recent-meeting win rate, average set margin, deciding-set
+head-to-head, days since last meeting, competition-/format-specific
+splits, and rest/workload/form/volatility differentials between the two
+players. **No head-to-head history is represented as no-data (`None`),
+never a fabricated 50/50 split.**
+
+## Feature Provenance & Leakage Prevention
+
+Every `FeatureSnapshot` carries a `ProvenanceMetadata` block: the exact
+source match IDs used per player and for head-to-head, the cutoff,
+observation counts, warnings, missing-feature names, a data-quality
+score, and two deterministic fingerprints (`repository_fingerprint` over
+the source match ID set, `input_fingerprint` over the full build
+inputs) — computed with `hashlib.sha256` over stable strings, **never**
+over a wall-clock or other nondeterministic value.
+
+`features.snapshots.build_feature_snapshot` asserts, before returning:
+the target match's own ID never appears in its own feature history, and
+every source record's `effective_timestamp` is strictly before `as_of`
+— raising `features.errors.SnapshotLeakageError` otherwise.
+`datasets.leakage` adds dataset/split-level checks: target-match
+inclusion, source timestamps, a snapshot matching its own training
+example, forbidden target fields, duplicate examples across splits, and
+non-chronological split boundaries — combined into a `LeakageReport`
+via `datasets.leakage.run_dataset_leakage_report`, with
+`assert_no_leakage` raising `LeakageViolation` on any failure.
+
+## Chronological Dataset Building & Walk-Forward Validation
+
+`datasets.builder.DatasetBuilder` converts completed matches (status
+`finished`/`retired` with a recorded `winner_id`) into labeled
+`TrainingExample`s. The pre-match cutoff (`as_of`) defaults to the
+match's own `scheduled_at` (configurable to `actual_start_at` via
+`dataset_cutoff_policy`) — deliberately the safest, earliest-known
+boundary. The label (`player_a_won`) comes only from the match's
+recorded result; the `FeatureSnapshot` it's paired with was built to
+exclude that match entirely.
+
+**Random train/test splitting is not implemented.** `datasets.splits`
+provides three chronological strategies instead:
+
+- `chronological_holdout_split` — one train → validation → test split
+  by configured ratios (`split_train_ratio`, etc.), always disjoint and
+  time-ordered.
+- `walk_forward_splits` — expanding-window folds: each fold's training
+  set grows to include all prior folds; only *test* segments across
+  folds are checked for non-overlap (training segments are expected to
+  share examples by design).
+- `rolling_window_splits` — fixed-size (non-expanding) training windows
+  advancing by a configurable step.
+
+## Export Formats
+
+`datasets.export` writes JSON Lines and CSV with: alphabetically stable
+column/key ordering (computed from the actual key union, not
+insertion order), UTC ISO-8601 timestamps, atomic writes (temp file +
+`os.replace`), and no pickle or other arbitrary-code-execution formats.
+Repeated export of identical examples is byte-for-byte deterministic
+(the one documented exception is `DatasetManifest.created_at`, which
+reflects real build time unless explicitly injected).
+
+## Running the Historical Intelligence Demo
+
+```bash
+pip install -r requirements.txt
+python -m features.demo
+```
+
+This demo (1) resolves a few player identities, including an
+accent-variant name and an exact-external-ID match, (2) builds a
+leakage-safe `FeatureSnapshot` for a scheduled target match from ten
+illustrative/mock historical matches, printing rolling/matchup features,
+observation counts, data-quality warnings, and the provenance
+fingerprint, and (3) builds a small chronological training dataset from
+those same matches, printing split sizes and a full leakage-check
+report. It makes no network calls and never suggests or places a wager.
+
 ## Requirements
 
 - Python 3.12+ (tested against 3.11/3.12; type hints assume 3.12
@@ -291,8 +503,11 @@ Expected output (structured JSON logs to stdout) confirms:
 
 ```bash
 pip install -r requirements.txt
-python -m compileall app config domain ingestion normalization engine
+python -m compileall app config domain ingestion normalization engine persistence identity features datasets
 pytest -v
+python -m app.main
+python -m engine.demo
+python -m features.demo
 ```
 
 ## Configuration
@@ -310,3 +525,10 @@ phase since there are no external integrations yet.
 Analytics engine weights and thresholds are configured separately via
 `ANALYTICS_*` environment variables — see `config/analytics.py` and the
 "Mathematical Formulas" section above.
+
+Historical intelligence settings (rolling windows, identity thresholds,
+dataset cutoff policy, split ratios, schema/builder versions, export
+precision) are configured via `HISTORICAL_*` environment variables —
+see `config/historical.py`. All weights, thresholds, ratios, and version
+identifiers are validated at construction; invalid configuration fails
+immediately with a clear `pydantic.ValidationError`.
