@@ -23,6 +23,7 @@ class TrainingExample(BaseModel):
     player_a_id: str
     player_b_id: str
     player_a_won: int = Field(..., ge=0, le=1)
+    best_of: int | None = Field(default=None, ge=1, description="The target match's own best-of format, if known")
     features: FeatureSnapshot
     feature_schema_version: str
     builder_version: str

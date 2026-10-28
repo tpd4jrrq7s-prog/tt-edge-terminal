@@ -81,6 +81,7 @@ class DatasetBuilder:
                     player_a_id=match.player_a_id,
                     player_b_id=match.player_b_id,
                     player_a_won=label,
+                    best_of=match.best_of,
                     features=snapshot,
                     feature_schema_version=settings.feature_schema_version,
                     builder_version=settings.builder_version,
